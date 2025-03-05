@@ -11,6 +11,27 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 2 # Need at least 2 commits to compare changes
+
+      - name: Check version update
+        id: check_version
+        run: |
+          # Get version from current metadata.json
+          CURRENT_VERSION=$(jq -r .version ./agent/metadata.json)
+
+          # Get version from previous commit
+          git checkout HEAD^
+          PREVIOUS_VERSION=$(jq -r .version ./agent/metadata.json)
+          git checkout -
+
+          if [ "$CURRENT_VERSION" == "$PREVIOUS_VERSION" ]; then
+            echo "Version not updated in metadata.json. Skipping upload."
+            echo "should_upload=false" >> $GITHUB_OUTPUT
+          else
+            echo "Version updated from $PREVIOUS_VERSION to $CURRENT_VERSION"
+            echo "should_upload=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -25,5 +46,6 @@ jobs:
           nearai login --accountId ${{ secrets.NEAR_ACCOUNT_ID }} --privateKey ${{ secrets.NEAR_PRIVATE_KEY }}
 
       - name: Upload to Registry
+        if: steps.check_version.outputs.should_upload == 'true'
         run: |
           nearai registry upload ./agent
