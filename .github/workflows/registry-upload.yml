@@ -26,5 +26,4 @@ jobs:
 
       - name: Upload to Registry
         run: |
-          # Assuming your agent/item is in the root directory
-          nearai registry upload .
+          nearai registry upload ./agent
