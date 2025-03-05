@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  upload_agent_to_registry:
+  check_version:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -30,6 +30,13 @@ jobs:
           else
             echo "Version updated from $PREVIOUS_VERSION to $CURRENT_VERSION"
           fi
+
+  upload_to_registry:
+    needs: check_version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
