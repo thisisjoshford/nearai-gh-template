@@ -8,8 +8,6 @@ on:
 jobs:
   check_version:
     runs-on: ubuntu-latest
-    outputs:
-      should_upload: ${{ steps.check_version.outputs.should_upload }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -17,7 +15,6 @@ jobs:
           fetch-depth: 2
 
       - name: Check version update
-        id: check_version
         run: |
           # Get version from current metadata.json
           CURRENT_VERSION=$(jq -r .version ./agent/metadata.json)
@@ -28,20 +25,11 @@ jobs:
           git checkout -
 
           if [ "$CURRENT_VERSION" == "$PREVIOUS_VERSION" ]; then
-            echo "Version not updated in metadata.json. Skipping upload."
-            echo "should_upload=false" >> $GITHUB_OUTPUT
+            echo "::error::Version in metadata.json must be updated before pushing to main branch. Current version: $CURRENT_VERSION"
+            exit 1
           else
             echo "Version updated from $PREVIOUS_VERSION to $CURRENT_VERSION"
-            echo "should_upload=true" >> $GITHUB_OUTPUT
           fi
-
-  upload:
-    needs: check_version
-    if: needs.check_version.outputs.should_upload == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
