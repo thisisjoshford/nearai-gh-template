@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  check_version:
+  upload_agent_to_registry:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
