@@ -2,8 +2,8 @@ name: Upload to NEAR AI Registry
 
 on:
   push:
-    tags:
-      - 'v*'  # Trigger on version tags
+    branches:
+      - main
 
 jobs:
   upload:
@@ -23,7 +23,7 @@ jobs:
       - name: Login to NEAR AI
         run: |
           nearai login --accountId ${{ secrets.NEAR_ACCOUNT_ID }} --privateKey ${{ secrets.NEAR_PRIVATE_KEY }}
-        
+
       - name: Upload to Registry
         run: |
           # Assuming your agent/item is in the root directory
