@@ -6,13 +6,15 @@ on:
       - main
 
 jobs:
-  upload:
+  check_version:
     runs-on: ubuntu-latest
+    outputs:
+      should_upload: ${{ steps.check_version.outputs.should_upload }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 2 # Need at least 2 commits to compare changes
+          fetch-depth: 2
 
       - name: Check version update
         id: check_version
@@ -33,6 +35,14 @@ jobs:
             echo "should_upload=true" >> $GITHUB_OUTPUT
           fi
 
+  upload:
+    needs: check_version
+    if: needs.check_version.outputs.should_upload == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -46,6 +56,5 @@ jobs:
           nearai login --accountId ${{ secrets.NEAR_ACCOUNT_ID }} --privateKey ${{ secrets.NEAR_PRIVATE_KEY }}
 
       - name: Upload to Registry
-        if: steps.check_version.outputs.should_upload == 'true'
         run: |
           nearai registry upload ./agent
