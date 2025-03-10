@@ -78,9 +78,12 @@ jobs:
 
       - name: Save modified agents as artifact
         if: success()
-        uses: actions/upload-artifact@v3
+        run: |
+          echo '${{ steps.find_modified.outputs.modified_agents }}' > modified_agents.json
+
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
           name: modified-agents
-          path: |
-            echo '${{ steps.find_modified.outputs.modified_agents }}' > modified_agents.json
-            modified_agents.json
+          path: modified_agents.json
