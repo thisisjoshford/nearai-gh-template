@@ -9,16 +9,27 @@ on:
       - main
 
 jobs:
-  check_versions:
+  check_and_upload:
     runs-on: ubuntu-latest
-    outputs:
-      modified_agents: ${{ steps.find_modified.outputs.modified_agents }}
+    env:
+      # Add all your namespace private keys here
+      ACCOUNT_1_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_1_NEAR_PRIVATE_KEY }}
+      ACCOUNT_2_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_2_NEAR_PRIVATE_KEY }}
+      # Add more as needed
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install NEAR AI CLI
+        run: pip install nearai
 
       - name: Find modified agents
         id: find_modified
@@ -57,17 +68,45 @@ jobs:
             # Get current version
             CURRENT_VERSION=$(jq -r .version $agent)
             
-            # Get previous version
+            # Extract namespace and agent name
+            NAMESPACE=$(echo $agent | cut -d'/' -f2)
+            AGENT_NAME=$(echo $agent | cut -d'/' -f3)
+            
+            # Get previous version from git
             git checkout HEAD^
             if [ -f "$agent" ]; then
               PREVIOUS_VERSION=$(jq -r .version $agent)
+              IS_NEW_IN_REPO="false"
             else
-              PREVIOUS_VERSION="new agent"
+              PREVIOUS_VERSION="new in repo"
+              IS_NEW_IN_REPO="true"
             fi
             git checkout -
             
-            if [ "$PREVIOUS_VERSION" == "new agent" ]; then
-              echo "New agent detected: $agent with version $CURRENT_VERSION"
+            # Check if agent exists in registry
+            SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
+            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
+              PRIVATE_KEY=$(printenv $SECRET_NAME)
+              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
+              
+              if nearai registry info $NAMESPACE/$AGENT_NAME &>/dev/null; then
+                IS_NEW_IN_REGISTRY="false"
+                echo "Agent exists in registry: $NAMESPACE/$AGENT_NAME"
+              else
+                IS_NEW_IN_REGISTRY="true"
+                echo "Agent is new to registry: $NAMESPACE/$AGENT_NAME"
+              fi
+            else
+              echo "Warning: No private key found for $NAMESPACE (looking for secret: $SECRET_NAME)"
+              echo "Cannot check registry status for this agent"
+              IS_NEW_IN_REGISTRY="unknown"
+            fi
+            
+            # Determine if version update is needed
+            if [ "$IS_NEW_IN_REPO" == "true" ]; then
+              echo "New agent detected in repo: $agent with version $CURRENT_VERSION"
+            elif [ "$IS_NEW_IN_REGISTRY" == "true" ]; then
+              echo "Agent exists in repo but is new to registry: $agent with version $CURRENT_VERSION"
             elif [ "$CURRENT_VERSION" == "$PREVIOUS_VERSION" ]; then
               echo "::error::Version in $agent must be updated before pushing to main branch. Current version: $CURRENT_VERSION"
               exit 1
@@ -76,27 +115,10 @@ jobs:
             fi
           done
 
-  upload:
-    needs: check_versions
-    if: success() && (github.event_name == 'push' || github.event_name == 'pull_request')
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install NEAR AI CLI
-        run: pip install nearai
-
       - name: Upload modified agents
-        if: needs.check_versions.outputs.modified_agents != '[]'
+        if: steps.find_modified.outputs.modified_agents != '[]' && (github.event_name == 'push' || github.event_name == 'pull_request')
         run: |
-          MODIFIED_AGENTS='${{ needs.check_versions.outputs.modified_agents }}'
+          MODIFIED_AGENTS='${{ steps.find_modified.outputs.modified_agents }}'
 
           # Parse the JSON array
           echo "$MODIFIED_AGENTS" | jq -c '.[]' | while read -r agent; do
@@ -120,6 +142,13 @@ jobs:
               # Login with the namespace as account ID
               nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
               
+              # Check if agent exists before uploading
+              if nearai registry info $NAMESPACE/$AGENT_NAME &>/dev/null; then
+                echo "Updating existing agent: $NAMESPACE/$AGENT_NAME"
+              else
+                echo "Creating new agent: $NAMESPACE/$AGENT_NAME"
+              fi
+              
               # Upload the agent
               nearai registry upload $AGENT_PATH
             else
@@ -127,8 +156,3 @@ jobs:
               echo "Skipping upload for this agent"
             fi
           done
-        env:
-          # Add all your namespace private keys here
-          ACCOUNT_1_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_1_NEAR_PRIVATE_KEY }}
-          ACCOUNT_2_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_2_NEAR_PRIVATE_KEY }}
-          # Add more as needed
