@@ -1,7 +1,7 @@
 {
-  "name": "gh-upload-test",
-  "version": "0.0.8",
-  "description": "gh-upload-test",
+  "name": "near-ai-github-template",
+  "version": "0.0.9",
+  "description": "Template for uploading agents to NEAR AI via Github Actions",
   "category": "agent",
   "tags": [],
   "details": {

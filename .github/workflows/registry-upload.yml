@@ -53,7 +53,7 @@ jobs:
 
       - name: Login to NEAR AI
         run: |
-          nearai login --accountId ${{ secrets.NEAR_ACCOUNT_ID }} --privateKey ${{ secrets.NEAR_PRIVATE_KEY }}
+          nearai login --accountId your-account.near --privateKey ${{ secrets.NEAR_PRIVATE_KEY }}
 
       - name: Upload to Registry
         run: |
