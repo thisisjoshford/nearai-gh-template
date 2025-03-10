@@ -1,0 +1,87 @@
+name: Upload Modified Agents
+
+on:
+  workflow_run:
+    workflows: ['Check Agent Versions']
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  upload:
+    # Only run if the previous workflow succeeded and this is a push to main
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install NEAR AI CLI
+        run: pip install nearai
+
+      - name: Download workflow artifact
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: check-versions.yml
+          name: modified-agents
+          path: ./artifacts
+          run_id: ${{ github.event.workflow_run.id }}
+
+      - name: Upload modified agents
+        run: |
+          # Read the modified agents from the artifact
+          if [ ! -f "./artifacts/modified_agents.json" ]; then
+            echo "No modified_agents.json file found"
+            exit 0
+          fi
+
+          MODIFIED_AGENTS=$(cat ./artifacts/modified_agents.json)
+
+          # Check if there are any agents to upload
+          if [ "$MODIFIED_AGENTS" == "[]" ]; then
+            echo "No agents to upload"
+            exit 0
+          fi
+
+          # Parse the JSON array
+          echo "$MODIFIED_AGENTS" | jq -c '.[]' | while read -r agent; do
+            # Remove quotes from the agent string
+            agent=$(echo $agent | tr -d '"')
+            
+            # Split into namespace and agent name
+            NAMESPACE=$(echo $agent | cut -d'/' -f1)
+            AGENT_NAME=$(echo $agent | cut -d'/' -f2)
+            AGENT_PATH="agents/$NAMESPACE/$AGENT_NAME"
+            
+            echo "Uploading agent: $NAMESPACE/$AGENT_NAME"
+            
+            # Convert namespace to uppercase and replace dots/hyphens with underscores for env var name
+            SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
+            
+            # Check if the secret exists
+            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
+              # Get the private key from the dynamic secret name
+              PRIVATE_KEY=$(printenv $SECRET_NAME)
+              
+              # Login with the namespace as account ID
+              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
+              
+              # Upload the agent
+              nearai registry upload $AGENT_PATH
+            else
+              echo "Warning: No private key found for $NAMESPACE (looking for secret: $SECRET_NAME)"
+              echo "Skipping upload for this agent"
+            fi
+          done
+        env:
+          # Add all your namespace private keys here
+          ACCOUNT_1_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_1_NEAR_PRIVATE_KEY }}
+          ACCOUNT_2_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_2_NEAR_PRIVATE_KEY }}
+          # Add more as needed
