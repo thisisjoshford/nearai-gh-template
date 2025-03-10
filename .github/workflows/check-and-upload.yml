@@ -15,6 +15,7 @@ jobs:
       # Add all your namespace private keys here
       ACCOUNT_1_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_1_NEAR_PRIVATE_KEY }}
       ACCOUNT_2_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_2_NEAR_PRIVATE_KEY }}
+      ACCOUNT_3_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_3_NEAR_PRIVATE_KEY }}
       # Add more as needed
 
     steps:
