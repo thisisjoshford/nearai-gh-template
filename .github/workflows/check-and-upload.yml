@@ -93,16 +93,7 @@ jobs:
       - name: Install NEAR AI CLI
         run: pip install nearai
 
-      - name: Determine run mode
-        id: run_mode
-        run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
-            echo "mode=upload" >> $GITHUB_OUTPUT
-          else
-            echo "mode=dry-run" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Upload or dry-run modified agents
+      - name: Upload modified agents
         if: needs.check_versions.outputs.modified_agents != '[]'
         run: |
           MODIFIED_AGENTS='${{ needs.check_versions.outputs.modified_agents }}'
@@ -125,25 +116,15 @@ jobs:
               # Get the private key from the dynamic secret name
               PRIVATE_KEY=$(printenv $SECRET_NAME)
               
-              if [ "${{ steps.run_mode.outputs.mode }}" == "upload" ]; then
-                echo "Uploading agent: $NAMESPACE/$AGENT_NAME"
-                # Login with the namespace as account ID
-                nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
-                
-                # Upload the agent
-                nearai registry upload $AGENT_PATH
-              else
-                echo "[DRY RUN] Would upload agent: $NAMESPACE/$AGENT_NAME"
-                echo "[DRY RUN] Would login with account: $NAMESPACE"
-                echo "[DRY RUN] Would upload path: $AGENT_PATH"
-              fi
+              echo "Uploading agent: $NAMESPACE/$AGENT_NAME"
+              # Login with the namespace as account ID
+              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
+              
+              # Upload the agent
+              nearai registry upload $AGENT_PATH
             else
               echo "Warning: No private key found for $NAMESPACE (looking for secret: $SECRET_NAME)"
-              if [ "${{ steps.run_mode.outputs.mode }}" == "dry-run" ]; then
-                echo "[DRY RUN] This is expected in PR testing - no actual secrets needed"
-              else
-                echo "Skipping upload for this agent"
-              fi
+              echo "Skipping upload for this agent"
             fi
           done
         env:
