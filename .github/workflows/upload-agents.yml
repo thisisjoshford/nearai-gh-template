@@ -10,8 +10,8 @@ on:
 
 jobs:
   upload:
-    # Only run if the previous workflow succeeded and this is a push to main
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    # Modified to also run on PRs for testing
+    if: ${{ github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'pull_request') }}
     runs-on: ubuntu-latest
 
     steps:
