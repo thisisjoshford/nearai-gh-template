@@ -1,0 +1,153 @@
+name: Check and Upload Agents
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check_versions:
+    runs-on: ubuntu-latest
+    outputs:
+      modified_agents: ${{ steps.find_modified.outputs.modified_agents }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+
+      - name: Find modified agents
+        id: find_modified
+        run: |
+          # Get list of modified agent metadata files
+          MODIFIED_AGENTS=$(git diff --name-only HEAD^ HEAD | grep "^agents/.*/.*metadata.json" || true)
+
+          if [ -z "$MODIFIED_AGENTS" ]; then
+            echo "No agent metadata files were modified"
+            echo "modified_agents=[]" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Convert to JSON array for output
+          MODIFIED_JSON="["
+          for agent in $MODIFIED_AGENTS; do
+            NAMESPACE=$(echo $agent | cut -d'/' -f2)
+            AGENT_NAME=$(echo $agent | cut -d'/' -f3)
+            MODIFIED_JSON="${MODIFIED_JSON}\"${NAMESPACE}/${AGENT_NAME}\","
+          done
+          MODIFIED_JSON="${MODIFIED_JSON%,}]"
+
+          echo "modified_agents=$MODIFIED_JSON" >> $GITHUB_OUTPUT
+          echo "Found modified agents: $MODIFIED_JSON"
+
+      - name: Check version updates
+        if: steps.find_modified.outputs.modified_agents != '[]'
+        run: |
+          # Get list of modified agent metadata files
+          MODIFIED_AGENTS=$(git diff --name-only HEAD^ HEAD | grep "^agents/.*/.*metadata.json" || true)
+
+          # Check each modified agent's version
+          for agent in $MODIFIED_AGENTS; do
+            echo "Checking version for agent: $agent"
+            
+            # Get current version
+            CURRENT_VERSION=$(jq -r .version $agent)
+            
+            # Get previous version
+            git checkout HEAD^
+            if [ -f "$agent" ]; then
+              PREVIOUS_VERSION=$(jq -r .version $agent)
+            else
+              PREVIOUS_VERSION="new agent"
+            fi
+            git checkout -
+            
+            if [ "$PREVIOUS_VERSION" == "new agent" ]; then
+              echo "New agent detected: $agent with version $CURRENT_VERSION"
+            elif [ "$CURRENT_VERSION" == "$PREVIOUS_VERSION" ]; then
+              echo "::error::Version in $agent must be updated before pushing to main branch. Current version: $CURRENT_VERSION"
+              exit 1
+            else
+              echo "Version updated for $agent from $PREVIOUS_VERSION to $CURRENT_VERSION"
+            fi
+          done
+
+  upload:
+    needs: check_versions
+    if: success() && (github.event_name == 'push' || github.event_name == 'pull_request')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install NEAR AI CLI
+        run: pip install nearai
+
+      - name: Determine run mode
+        id: run_mode
+        run: |
+          if [ "${{ github.event_name }}" == "push" ]; then
+            echo "mode=upload" >> $GITHUB_OUTPUT
+          else
+            echo "mode=dry-run" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload or dry-run modified agents
+        if: needs.check_versions.outputs.modified_agents != '[]'
+        run: |
+          MODIFIED_AGENTS='${{ needs.check_versions.outputs.modified_agents }}'
+
+          # Parse the JSON array
+          echo "$MODIFIED_AGENTS" | jq -c '.[]' | while read -r agent; do
+            # Remove quotes from the agent string
+            agent=$(echo $agent | tr -d '"')
+            
+            # Split into namespace and agent name
+            NAMESPACE=$(echo $agent | cut -d'/' -f1)
+            AGENT_NAME=$(echo $agent | cut -d'/' -f2)
+            AGENT_PATH="agents/$NAMESPACE/$AGENT_NAME"
+            
+            # Convert namespace to uppercase and replace dots/hyphens with underscores for env var name
+            SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
+            
+            # Check if the secret exists
+            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
+              # Get the private key from the dynamic secret name
+              PRIVATE_KEY=$(printenv $SECRET_NAME)
+              
+              if [ "${{ steps.run_mode.outputs.mode }}" == "upload" ]; then
+                echo "Uploading agent: $NAMESPACE/$AGENT_NAME"
+                # Login with the namespace as account ID
+                nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
+                
+                # Upload the agent
+                nearai registry upload $AGENT_PATH
+              else
+                echo "[DRY RUN] Would upload agent: $NAMESPACE/$AGENT_NAME"
+                echo "[DRY RUN] Would login with account: $NAMESPACE"
+                echo "[DRY RUN] Would upload path: $AGENT_PATH"
+              fi
+            else
+              echo "Warning: No private key found for $NAMESPACE (looking for secret: $SECRET_NAME)"
+              if [ "${{ steps.run_mode.outputs.mode }}" == "dry-run" ]; then
+                echo "[DRY RUN] This is expected in PR testing - no actual secrets needed"
+              else
+                echo "Skipping upload for this agent"
+              fi
+            fi
+          done
+        env:
+          # Add all your namespace private keys here
+          ACCOUNT_1_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_1_NEAR_PRIVATE_KEY }}
+          ACCOUNT_2_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_2_NEAR_PRIVATE_KEY }}
+          # Add more as needed
