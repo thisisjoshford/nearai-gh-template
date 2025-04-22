@@ -9,15 +9,10 @@ on:
       - main
 
 jobs:
-  check_and_upload:
+  check_agents:
     runs-on: ubuntu-latest
-    env:
-      # Add all your NEAR Account ID's here in the format <ACCOUNT>_NEAR_PRIVATE_KEY
-      # Example: account-1.near -> replaced with ACCOUNT_1_NEAR
-      ACCOUNT_1_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_1_NEAR_PRIVATE_KEY }}
-      ACCOUNT_2_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_2_NEAR_PRIVATE_KEY }}
-      # Add more as needed
-
+    # Run this job only on pull requests or pushes to branches (not main)
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -29,11 +24,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install NEAR AI CLI
-        run: pip install nearai
+      - name: Install jq
+        run: sudo apt-get install -y jq
 
       - name: Identify new and modified agents
-        id: classify_agents
+        id: check_agents
         run: |
           NEW_AGENTS=()
           MODIFIED_AGENTS=()
@@ -56,6 +51,9 @@ jobs:
                 if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
                   echo "Modified agent detected: $NAMESPACE/$AGENT_NAME"
                   MODIFIED_AGENTS+=("$agent_dir")
+                else
+                  echo "::error::Version in $METADATA_PATH must be updated before pushing to main branch. Current version: $CURRENT_VERSION"
+                  exit 1
                 fi
               else
                 echo "New agent detected: $NAMESPACE/$AGENT_NAME"
@@ -64,14 +62,66 @@ jobs:
             fi
           done
 
-          # Output the lists of new and modified agents
-          echo "NEW_AGENTS=${NEW_AGENTS[@]}" >> $GITHUB_ENV
-          echo "MODIFIED_AGENTS=${MODIFIED_AGENTS[@]}" >> $GITHUB_ENV
+          # Output summary of what was found
+          echo "New agents found: ${#NEW_AGENTS[@]}"
+          echo "Modified agents found: ${#MODIFIED_AGENTS[@]}"
 
-      - name: Upload new and modified agents
+  upload_agents:
+    runs-on: ubuntu-latest
+    # Only run on pushes to main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      ACCOUNT_1_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_1_NEAR_PRIVATE_KEY }}
+      ACCOUNT_2_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_2_NEAR_PRIVATE_KEY }}
+      # Add more as needed
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install NEAR AI CLI
+        run: pip install nearai
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Identify and upload agents
         run: |
+          NEW_AGENTS=()
+          MODIFIED_AGENTS=()
+
+          # Identify new and modified agents
+          for agent_dir in agents/*; do
+            if [ -d "$agent_dir" ] && [ -f "$agent_dir/metadata.json" ]; then
+              METADATA_PATH="$agent_dir/metadata.json"
+              
+              # Extract namespace, agent name, and version
+              NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
+              AGENT_NAME=$(jq -r .name "$METADATA_PATH")
+              CURRENT_VERSION=$(jq -r .version "$METADATA_PATH")
+              
+              # Check if the agent is new or modified
+              if git show HEAD^:"$METADATA_PATH" &>/dev/null; then
+                PREVIOUS_VERSION=$(git show HEAD^:"$METADATA_PATH" | jq -r .version)
+                if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+                  echo "Modified agent detected: $NAMESPACE/$AGENT_NAME"
+                  MODIFIED_AGENTS+=("$agent_dir")
+                fi
+              else
+                echo "New agent detected: $NAMESPACE/$AGENT_NAME"
+                NEW_AGENTS+=("$agent_dir")
+              fi
+            fi
+          done
+
           # Upload new agents
-          for agent_dir in $NEW_AGENTS; do
+          for agent_dir in ${NEW_AGENTS[@]}; do
             METADATA_PATH="$agent_dir/metadata.json"
             NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
             AGENT_NAME=$(jq -r .name "$METADATA_PATH")
@@ -88,7 +138,7 @@ jobs:
           done
 
           # Upload modified agents
-          for agent_dir in $MODIFIED_AGENTS; do
+          for agent_dir in ${MODIFIED_AGENTS[@]}; do
             METADATA_PATH="$agent_dir/metadata.json"
             NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
             AGENT_NAME=$(jq -r .name "$METADATA_PATH")
