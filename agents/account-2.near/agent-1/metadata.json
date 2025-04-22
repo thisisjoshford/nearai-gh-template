@@ -1,5 +1,5 @@
 {
-  "name": "nearai-gh-template-agent-1",
+  "name": "acct-2-agent-1",
   "version": "0.0.1",
   "description": "Template for uploading agents to NEAR AI via Github Actions",
   "category": "agent",
