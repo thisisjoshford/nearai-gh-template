@@ -32,32 +32,50 @@ jobs:
         run: |
           NEW_AGENTS=()
           MODIFIED_AGENTS=()
-
+          
+          # Get list of changed files in this commit/PR
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD || git diff --name-only origin/main HEAD)
+          
           # Iterate through all subfolders in the agents directory
           for agent_dir in agents/*; do
             if [ -d "$agent_dir" ] && [ -f "$agent_dir/metadata.json" ]; then
               METADATA_PATH="$agent_dir/metadata.json"
+              AGENT_DIR_RELATIVE=$(echo "$agent_dir" | sed 's|^./||')
               
-              # Extract namespace and agent name from metadata.json
-              NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
-              AGENT_NAME=$(jq -r .name "$METADATA_PATH")
-              CURRENT_VERSION=$(jq -r .version "$METADATA_PATH")
+              # Check if any files in this agent directory were modified
+              AGENT_FILES_MODIFIED=false
+              for file in $CHANGED_FILES; do
+                if [[ $file == $AGENT_DIR_RELATIVE/* ]]; then
+                  AGENT_FILES_MODIFIED=true
+                  break
+                fi
+              done
               
-              echo "Checking agent: $NAMESPACE/$AGENT_NAME (version: $CURRENT_VERSION)"
-              
-              # Check if the agent is new or modified
-              if git show HEAD^:"$METADATA_PATH" &>/dev/null; then
-                PREVIOUS_VERSION=$(git show HEAD^:"$METADATA_PATH" | jq -r .version)
-                if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
-                  echo "Modified agent detected: $NAMESPACE/$AGENT_NAME"
-                  MODIFIED_AGENTS+=("$agent_dir")
+              # Only process agents that have changes
+              if [ "$AGENT_FILES_MODIFIED" = true ] || [[ "$CHANGED_FILES" == *"$METADATA_PATH"* ]]; then
+                # Extract namespace and agent name from metadata.json
+                NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
+                AGENT_NAME=$(jq -r .name "$METADATA_PATH")
+                CURRENT_VERSION=$(jq -r .version "$METADATA_PATH")
+                
+                echo "Checking agent: $NAMESPACE/$AGENT_NAME (version: $CURRENT_VERSION)"
+                
+                # Check if the agent is new or modified
+                if git show HEAD^:"$METADATA_PATH" &>/dev/null; then
+                  PREVIOUS_VERSION=$(git show HEAD^:"$METADATA_PATH" | jq -r .version)
+                  if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+                    echo "Modified agent detected: $NAMESPACE/$AGENT_NAME"
+                    MODIFIED_AGENTS+=("$agent_dir")
+                  else
+                    echo "::error::Version in $METADATA_PATH must be updated before pushing to main branch. Current version: $CURRENT_VERSION"
+                    exit 1
+                  fi
                 else
-                  echo "::error::Version in $METADATA_PATH must be updated before pushing to main branch. Current version: $CURRENT_VERSION"
-                  exit 1
+                  echo "New agent detected: $NAMESPACE/$AGENT_NAME"
+                  NEW_AGENTS+=("$agent_dir")
                 fi
               else
-                echo "New agent detected: $NAMESPACE/$AGENT_NAME"
-                NEW_AGENTS+=("$agent_dir")
+                echo "Skipping agent in $agent_dir (no changes detected)"
               fi
             fi
           done
@@ -93,6 +111,9 @@ jobs:
 
       - name: Identify and upload agents
         run: |
+          # Get list of changed files in this commit
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+          
           NEW_AGENTS=()
           MODIFIED_AGENTS=()
 
@@ -100,22 +121,37 @@ jobs:
           for agent_dir in agents/*; do
             if [ -d "$agent_dir" ] && [ -f "$agent_dir/metadata.json" ]; then
               METADATA_PATH="$agent_dir/metadata.json"
+              AGENT_DIR_RELATIVE=$(echo "$agent_dir" | sed 's|^./||')
               
-              # Extract namespace, agent name, and version
-              NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
-              AGENT_NAME=$(jq -r .name "$METADATA_PATH")
-              CURRENT_VERSION=$(jq -r .version "$METADATA_PATH")
+              # Check if any files in this agent directory were modified
+              AGENT_FILES_MODIFIED=false
+              for file in $CHANGED_FILES; do
+                if [[ $file == $AGENT_DIR_RELATIVE/* ]]; then
+                  AGENT_FILES_MODIFIED=true
+                  break
+                fi
+              done
               
-              # Check if the agent is new or modified
-              if git show HEAD^:"$METADATA_PATH" &>/dev/null; then
-                PREVIOUS_VERSION=$(git show HEAD^:"$METADATA_PATH" | jq -r .version)
-                if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
-                  echo "Modified agent detected: $NAMESPACE/$AGENT_NAME"
-                  MODIFIED_AGENTS+=("$agent_dir")
+              # Only process agents that have changes
+              if [ "$AGENT_FILES_MODIFIED" = true ] || [[ "$CHANGED_FILES" == *"$METADATA_PATH"* ]]; then
+                # Extract namespace, agent name, and version
+                NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
+                AGENT_NAME=$(jq -r .name "$METADATA_PATH")
+                CURRENT_VERSION=$(jq -r .version "$METADATA_PATH")
+                
+                # Check if the agent is new or modified
+                if git show HEAD^:"$METADATA_PATH" &>/dev/null; then
+                  PREVIOUS_VERSION=$(git show HEAD^:"$METADATA_PATH" | jq -r .version)
+                  if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+                    echo "Modified agent detected: $NAMESPACE/$AGENT_NAME"
+                    MODIFIED_AGENTS+=("$agent_dir")
+                  fi
+                else
+                  echo "New agent detected: $NAMESPACE/$AGENT_NAME"
+                  NEW_AGENTS+=("$agent_dir")
                 fi
               else
-                echo "New agent detected: $NAMESPACE/$AGENT_NAME"
-                NEW_AGENTS+=("$agent_dir")
+                echo "Skipping agent in $agent_dir (no changes detected)"
               fi
             fi
           done
