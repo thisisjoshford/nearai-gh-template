@@ -1,6 +1,6 @@
 from nearai.agents.environment import Environment
 
-test
+
 def run(env: Environment):
     # Your agent code here
     # Agent 2
