@@ -12,10 +12,10 @@ jobs:
   check_and_upload:
     runs-on: ubuntu-latest
     env:
-      # Add all your namespace private keys here
+      # Add all your NEAR Account ID's here in the format <ACCOUNT>_NEAR_PRIVATE_KEY
+      # Example: account-1.near -> replaced with ACCOUNT_1_NEAR
       ACCOUNT_1_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_1_NEAR_PRIVATE_KEY }}
       ACCOUNT_2_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_2_NEAR_PRIVATE_KEY }}
-      ACCOUNT_3_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_3_NEAR_PRIVATE_KEY }}
       # Add more as needed
 
     steps:
