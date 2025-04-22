@@ -36,7 +36,7 @@ jobs:
           MODIFIED_JSON="["
           for agent in $MODIFIED_AGENTS; do
             NAMESPACE=$(echo $agent | cut -d'/' -f2)
-            AGENT_NAME=$(echo $agent | cut -d'/' -f3)
+            AGENT_NAME=$(jq -r .name $agent)
             MODIFIED_JSON="${MODIFIED_JSON}\"${NAMESPACE}/${AGENT_NAME}\","
           done
           MODIFIED_JSON="${MODIFIED_JSON%,}]"

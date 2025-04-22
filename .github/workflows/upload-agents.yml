@@ -57,7 +57,7 @@ jobs:
             
             # Split into namespace and agent name
             NAMESPACE=$(echo $agent | cut -d'/' -f1)
-            AGENT_NAME=$(echo $agent | cut -d'/' -f2)
+            AGENT_NAME=$(jq -r .name $agent)
             AGENT_PATH="agents/$NAMESPACE/$AGENT_NAME"
             
             echo "Uploading agent: $NAMESPACE/$AGENT_NAME"
