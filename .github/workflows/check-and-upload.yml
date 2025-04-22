@@ -32,146 +32,74 @@ jobs:
       - name: Install NEAR AI CLI
         run: pip install nearai
 
-      - name: Find modified and new agents
-        id: find_agents
+      - name: Identify new and modified agents
+        id: classify_agents
         run: |
-          # Get list of all modified files
-          MODIFIED_FILES=$(git diff --name-only HEAD^ HEAD || true)
-          
-          # Find all agent metadata files that were modified
-          MODIFIED_METADATA=$(echo "$MODIFIED_FILES" | grep "^agents/.*/.*metadata.json" || true)
-          
-          # Find all new agent directories
-          # Look for new directories that contain metadata.json files
-          NEW_AGENT_DIRS=$(echo "$MODIFIED_FILES" | grep "^agents/.*/.*/.*" | 
-                          awk -F/ '{print $1"/"$2"/"$3}' | sort -u | 
-                          while read dir; do
-                            if [ -f "$dir/metadata.json" ] && ! git ls-tree -r HEAD^ --name-only | grep -q "^$dir/metadata.json"; then
-                              echo "$dir/metadata.json"
-                            fi
-                          done || true)
-          
-          # Combine modified and new metadata files
-          ALL_AGENT_METADATA=$(echo -e "$MODIFIED_METADATA\n$NEW_AGENT_DIRS" | grep -v "^$" | sort -u)
-          
-          if [ -z "$ALL_AGENT_METADATA" ]; then
-            echo "No agent metadata files were modified or added"
-            echo "agents_to_process=[]" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Convert to JSON array for output
-          AGENTS_JSON="["
-          for agent in $ALL_AGENT_METADATA; do
-            NAMESPACE=$(echo $agent | cut -d'/' -f2)
-            AGENT_NAME=$(jq -r .name "$agent")
-            AGENTS_JSON="${AGENTS_JSON}\"${NAMESPACE}/${AGENT_NAME}\","
-          done
-          AGENTS_JSON="${AGENTS_JSON%,}]"
-          
-          echo "agents_to_process=$AGENTS_JSON" >> $GITHUB_OUTPUT
-          echo "Found agents to process: $AGENTS_JSON"
+          NEW_AGENTS=()
+          MODIFIED_AGENTS=()
 
-      - name: Check version updates
-        if: steps.find_agents.outputs.agents_to_process != '[]'
-        run: |
-          AGENTS_TO_PROCESS='${{ steps.find_agents.outputs.agents_to_process }}'
-          
-          # Parse the JSON array
-          echo "$AGENTS_TO_PROCESS" | jq -c '.[]' | while read -r agent; do
-            # Remove quotes from the agent string
-            agent=$(echo $agent | tr -d '"')
-            
-            # Split into namespace and agent name
-            NAMESPACE=$(echo $agent | cut -d'/' -f1)
-            AGENT_NAME=$(echo $agent | cut -d'/' -f2)
-            METADATA_PATH="agents/$NAMESPACE/$AGENT_NAME/metadata.json"
-            
-            echo "Checking version for agent: $METADATA_PATH"
-            
-            # Get current version
-            CURRENT_VERSION=$(jq -r .version $METADATA_PATH)
-            
-            # Check if agent is new in repo
-            if git show HEAD^:$METADATA_PATH &>/dev/null; then
-              # Get previous version
-              PREVIOUS_VERSION=$(git show HEAD^:$METADATA_PATH | jq -r .version)
-              IS_NEW_IN_REPO="false"
-            else
-              PREVIOUS_VERSION="new in repo"
-              IS_NEW_IN_REPO="true"
-            fi
-            
-            # Check if agent exists in registry
-            SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
-            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
-              PRIVATE_KEY=$(printenv $SECRET_NAME)
-              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
+          # Iterate through all subfolders in the agents directory
+          for agent_dir in agents/*; do
+            if [ -d "$agent_dir" ] && [ -f "$agent_dir/metadata.json" ]; then
+              METADATA_PATH="$agent_dir/metadata.json"
               
-              if nearai registry info $NAMESPACE/$AGENT_NAME &>/dev/null; then
-                IS_NEW_IN_REGISTRY="false"
-                echo "Agent exists in registry: $NAMESPACE/$AGENT_NAME"
+              # Extract namespace and agent name from metadata.json
+              NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
+              AGENT_NAME=$(jq -r .name "$METADATA_PATH")
+              CURRENT_VERSION=$(jq -r .version "$METADATA_PATH")
+              
+              echo "Checking agent: $NAMESPACE/$AGENT_NAME (version: $CURRENT_VERSION)"
+              
+              # Check if the agent is new or modified
+              if git show HEAD^:"$METADATA_PATH" &>/dev/null; then
+                PREVIOUS_VERSION=$(git show HEAD^:"$METADATA_PATH" | jq -r .version)
+                if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+                  echo "Modified agent detected: $NAMESPACE/$AGENT_NAME"
+                  MODIFIED_AGENTS+=("$agent_dir")
+                fi
               else
-                IS_NEW_IN_REGISTRY="true"
-                echo "Agent is new to registry: $NAMESPACE/$AGENT_NAME"
+                echo "New agent detected: $NAMESPACE/$AGENT_NAME"
+                NEW_AGENTS+=("$agent_dir")
               fi
-            else
-              echo "Warning: No private key found for $NAMESPACE (looking for secret: $SECRET_NAME)"
-              echo "Cannot check registry status for this agent"
-              IS_NEW_IN_REGISTRY="unknown"
-            fi
-            
-            # Determine if version update is needed
-            if [ "$IS_NEW_IN_REPO" == "true" ]; then
-              echo "New agent detected in repo: $METADATA_PATH with version $CURRENT_VERSION"
-            elif [ "$IS_NEW_IN_REGISTRY" == "true" ]; then
-              echo "Agent exists in repo but is new to registry: $METADATA_PATH with version $CURRENT_VERSION"
-            elif [ "$CURRENT_VERSION" == "$PREVIOUS_VERSION" ]; then
-              echo "::error::Version in $METADATA_PATH must be updated before pushing to main branch. Current version: $CURRENT_VERSION"
-              exit 1
-            else
-              echo "Version updated for $METADATA_PATH from $PREVIOUS_VERSION to $CURRENT_VERSION"
             fi
           done
 
-      - name: Upload agents
-        if: steps.find_agents.outputs.agents_to_process != '[]' && (github.event_name == 'push' || github.event_name == 'pull_request')
+          # Output the lists of new and modified agents
+          echo "NEW_AGENTS=${NEW_AGENTS[@]}" >> $GITHUB_ENV
+          echo "MODIFIED_AGENTS=${MODIFIED_AGENTS[@]}" >> $GITHUB_ENV
+
+      - name: Upload new and modified agents
         run: |
-          AGENTS_TO_PROCESS='${{ steps.find_agents.outputs.agents_to_process }}'
-          
-          # Parse the JSON array
-          echo "$AGENTS_TO_PROCESS" | jq -c '.[]' | while read -r agent; do
-            # Remove quotes from the agent string
-            agent=$(echo $agent | tr -d '"')
-            
-            # Split into namespace and agent name
-            NAMESPACE=$(echo $agent | cut -d'/' -f1)
-            AGENT_NAME=$(echo $agent | cut -d'/' -f2)
-            AGENT_PATH="agents/$NAMESPACE/$AGENT_NAME"
-            
-            # Convert namespace to uppercase and replace dots/hyphens with underscores for env var name
+          # Upload new agents
+          for agent_dir in $NEW_AGENTS; do
+            METADATA_PATH="$agent_dir/metadata.json"
+            NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
+            AGENT_NAME=$(jq -r .name "$METADATA_PATH")
             SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
-            
-            # Check if the secret exists
+
             if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
-              # Get the private key from the dynamic secret name
               PRIVATE_KEY=$(printenv $SECRET_NAME)
-              
-              echo "Uploading agent: $NAMESPACE/$AGENT_NAME"
-              # Login with the namespace as account ID
               nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
-              
-              # Check if agent exists before uploading
-              if nearai registry info $NAMESPACE/$AGENT_NAME &>/dev/null; then
-                echo "Updating existing agent: $NAMESPACE/$AGENT_NAME"
-              else
-                echo "Creating new agent: $NAMESPACE/$AGENT_NAME"
-              fi
-              
-              # Upload the agent
-              nearai registry upload $AGENT_PATH
+              echo "Uploading new agent: $NAMESPACE/$AGENT_NAME"
+              nearai registry upload "$agent_dir"
             else
-              echo "Warning: No private key found for $NAMESPACE (looking for secret: $SECRET_NAME)"
-              echo "Skipping upload for this agent"
+              echo "Skipping upload for $NAMESPACE/$AGENT_NAME due to missing private key"
+            fi
+          done
+
+          # Upload modified agents
+          for agent_dir in $MODIFIED_AGENTS; do
+            METADATA_PATH="$agent_dir/metadata.json"
+            NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
+            AGENT_NAME=$(jq -r .name "$METADATA_PATH")
+            SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
+
+            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
+              PRIVATE_KEY=$(printenv $SECRET_NAME)
+              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
+              echo "Uploading modified agent: $NAMESPACE/$AGENT_NAME"
+              nearai registry upload "$agent_dir"
+            else
+              echo "Skipping upload for $NAMESPACE/$AGENT_NAME due to missing private key"
             fi
           done
