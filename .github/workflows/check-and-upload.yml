@@ -64,7 +64,7 @@ jobs:
           AGENTS_JSON="["
           for agent in $ALL_AGENT_METADATA; do
             NAMESPACE=$(echo $agent | cut -d'/' -f2)
-            AGENT_NAME=$(echo $agent | cut -d'/' -f3)
+            AGENT_NAME=$(jq -r .name "$agent")
             AGENTS_JSON="${AGENTS_JSON}\"${NAMESPACE}/${AGENT_NAME}\","
           done
           AGENTS_JSON="${AGENTS_JSON%,}]"
