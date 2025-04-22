@@ -1,5 +1,6 @@
 {
-  "name": "acct-2-agent-1",
+  "namespace": "account-1.near",
+  "name": "hi",
   "version": "0.0.1",
   "description": "Template for uploading agents to NEAR AI via Github Actions",
   "category": "agent",

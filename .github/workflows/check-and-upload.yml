@@ -1,0 +1,105 @@
+name: Check and Upload Agents
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check_and_upload:
+    runs-on: ubuntu-latest
+    env:
+      # Add all your NEAR Account ID's here in the format <ACCOUNT>_NEAR_PRIVATE_KEY
+      # Example: account-1.near -> replaced with ACCOUNT_1_NEAR
+      ACCOUNT_1_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_1_NEAR_PRIVATE_KEY }}
+      ACCOUNT_2_NEAR_PRIVATE_KEY: ${{ secrets.ACCOUNT_2_NEAR_PRIVATE_KEY }}
+      # Add more as needed
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install NEAR AI CLI
+        run: pip install nearai
+
+      - name: Identify new and modified agents
+        id: classify_agents
+        run: |
+          NEW_AGENTS=()
+          MODIFIED_AGENTS=()
+
+          # Iterate through all subfolders in the agents directory
+          for agent_dir in agents/*; do
+            if [ -d "$agent_dir" ] && [ -f "$agent_dir/metadata.json" ]; then
+              METADATA_PATH="$agent_dir/metadata.json"
+              
+              # Extract namespace and agent name from metadata.json
+              NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
+              AGENT_NAME=$(jq -r .name "$METADATA_PATH")
+              CURRENT_VERSION=$(jq -r .version "$METADATA_PATH")
+              
+              echo "Checking agent: $NAMESPACE/$AGENT_NAME (version: $CURRENT_VERSION)"
+              
+              # Check if the agent is new or modified
+              if git show HEAD^:"$METADATA_PATH" &>/dev/null; then
+                PREVIOUS_VERSION=$(git show HEAD^:"$METADATA_PATH" | jq -r .version)
+                if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+                  echo "Modified agent detected: $NAMESPACE/$AGENT_NAME"
+                  MODIFIED_AGENTS+=("$agent_dir")
+                fi
+              else
+                echo "New agent detected: $NAMESPACE/$AGENT_NAME"
+                NEW_AGENTS+=("$agent_dir")
+              fi
+            fi
+          done
+
+          # Output the lists of new and modified agents
+          echo "NEW_AGENTS=${NEW_AGENTS[@]}" >> $GITHUB_ENV
+          echo "MODIFIED_AGENTS=${MODIFIED_AGENTS[@]}" >> $GITHUB_ENV
+
+      - name: Upload new and modified agents
+        run: |
+          # Upload new agents
+          for agent_dir in $NEW_AGENTS; do
+            METADATA_PATH="$agent_dir/metadata.json"
+            NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
+            AGENT_NAME=$(jq -r .name "$METADATA_PATH")
+            SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
+
+            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
+              PRIVATE_KEY=$(printenv $SECRET_NAME)
+              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
+              echo "Uploading new agent: $NAMESPACE/$AGENT_NAME"
+              nearai registry upload "$agent_dir"
+            else
+              echo "Skipping upload for $NAMESPACE/$AGENT_NAME due to missing private key"
+            fi
+          done
+
+          # Upload modified agents
+          for agent_dir in $MODIFIED_AGENTS; do
+            METADATA_PATH="$agent_dir/metadata.json"
+            NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
+            AGENT_NAME=$(jq -r .name "$METADATA_PATH")
+            SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
+
+            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
+              PRIVATE_KEY=$(printenv $SECRET_NAME)
+              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
+              echo "Uploading modified agent: $NAMESPACE/$AGENT_NAME"
+              nearai registry upload "$agent_dir"
+            else
+              echo "Skipping upload for $NAMESPACE/$AGENT_NAME due to missing private key"
+            fi
+          done
