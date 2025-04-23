@@ -173,8 +173,11 @@ jobs:
             fi
           done
 
-          # Upload new agents
-          for agent_dir in ${NEW_AGENTS[@]}; do
+            # Combine all agents that need uploading
+            ALL_AGENTS=("${NEW_AGENTS[@]}" "${MODIFIED_AGENTS[@]}")
+            
+            # Upload agents
+            for agent_dir in ${ALL_AGENTS[@]}; do
             METADATA_PATH="$agent_dir/metadata.json"
             NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
             AGENT_NAME=$(jq -r .name "$METADATA_PATH")
@@ -183,26 +186,9 @@ jobs:
             if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
               PRIVATE_KEY=$(printenv $SECRET_NAME)
               nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
-              echo "Uploading new agent: $NAMESPACE/$AGENT_NAME"
+              echo "Uploading agent: $NAMESPACE/$AGENT_NAME"
               nearai registry upload "$agent_dir"
             else
               echo "Skipping upload for $NAMESPACE/$AGENT_NAME due to missing private key"
             fi
-          done
-
-          # Upload modified agents
-          for agent_dir in ${MODIFIED_AGENTS[@]}; do
-            METADATA_PATH="$agent_dir/metadata.json"
-            NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
-            AGENT_NAME=$(jq -r .name "$METADATA_PATH")
-            SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
-
-            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
-              PRIVATE_KEY=$(printenv $SECRET_NAME)
-              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
-              echo "Uploading modified agent: $NAMESPACE/$AGENT_NAME"
-              nearai registry upload "$agent_dir"
-            else
-              echo "Skipping upload for $NAMESPACE/$AGENT_NAME due to missing private key"
-            fi
-          done
+            done
