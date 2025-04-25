@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has_changes: ${{ steps.check_result.outputs.has_changes }}
+      agents_to_process: ${{ steps.check_agents.outputs.agents_to_process }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -30,6 +31,7 @@ jobs:
       - name: Identify new and modified agents
         id: check_agents
         run: |
+          # Arrays to store agent directories
           NEW_AGENTS=()
           MODIFIED_AGENTS=()
           
@@ -84,21 +86,40 @@ jobs:
           echo "New agents found: ${#NEW_AGENTS[@]}"
           echo "Modified agents found: ${#MODIFIED_AGENTS[@]}"
           
-          # Set output variable to indicate if there are changes
-          has_changes="false"
-          if [ ${#NEW_AGENTS[@]} -gt 0 ] || [ ${#MODIFIED_AGENTS[@]} -gt 0 ]; then
-            has_changes="true"
+          # Create JSON array of agents to process
+          AGENTS_JSON="["
+          for agent_dir in "${NEW_AGENTS[@]}" "${MODIFIED_AGENTS[@]}"; do
+            if [ -n "$agent_dir" ]; then
+              METADATA_PATH="$agent_dir/metadata.json"
+              NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
+              AGENT_NAME=$(jq -r .name "$METADATA_PATH")
+              AGENTS_JSON="${AGENTS_JSON}\"${NAMESPACE}/${AGENT_NAME}\","
+            fi
+          done
+          AGENTS_JSON="${AGENTS_JSON%,}]"
+          
+          # If the array is empty (only has []), set it to empty array
+          if [ "$AGENTS_JSON" = "[" ]; then
+            AGENTS_JSON="[]"
           fi
-          echo "has_changes=$has_changes" >> $GITHUB_OUTPUT
+
+          # Set output variables
+          echo "agents_to_process=$AGENTS_JSON" >> $GITHUB_OUTPUT
+          
+          # Set has_changes flag
+          HAS_CHANGES="false"
+          if [ ${#NEW_AGENTS[@]} -gt 0 ] || [ ${#MODIFIED_AGENTS[@]} -gt 0 ]; then
+            HAS_CHANGES="true"
+          fi
+          echo "has_changes=$HAS_CHANGES" >> $GITHUB_OUTPUT
+          echo "Found agents to process: $AGENTS_JSON"
 
       - name: Check result
         id: check_result
         run: |
-          has_changes="false"
-          if [ ${#NEW_AGENTS[@]} -gt 0 ] || [ ${#MODIFIED_AGENTS[@]} -gt 0 ]; then
-            has_changes="true"
-          fi
-          echo "has_changes=$has_changes" >> $GITHUB_OUTPUT
+          # Just echo the output from the previous step for debugging
+          echo "has_changes=${{ steps.check_agents.outputs.has_changes }}"
+          echo "has_changes=${{ steps.check_agents.outputs.has_changes }}" >> $GITHUB_OUTPUT
 
   upload_agents:
     needs: check_agents
@@ -126,69 +147,42 @@ jobs:
       - name: Install jq
         run: sudo apt-get install -y jq
 
-      - name: Identify and upload agents
+      - name: Debug workflow outputs
         run: |
-          # Get list of changed files in this commit
-          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
-          
-          NEW_AGENTS=()
-          MODIFIED_AGENTS=()
+          echo "has_changes: ${{ needs.check_agents.outputs.has_changes }}"
+          echo "agents_to_process: ${{ needs.check_agents.outputs.agents_to_process }}"
 
-          # Identify new and modified agents
-          for agent_dir in agents/*; do
-            if [ -d "$agent_dir" ] && [ -f "$agent_dir/metadata.json" ]; then
-              METADATA_PATH="$agent_dir/metadata.json"
-              AGENT_DIR_RELATIVE=$(echo "$agent_dir" | sed 's|^./||')
+      - name: Upload agents
+        if: needs.check_agents.outputs.agents_to_process != '[]'
+        run: |
+          AGENTS_TO_PROCESS='${{ needs.check_agents.outputs.agents_to_process }}'
+          
+          # Parse the JSON array
+          echo "$AGENTS_TO_PROCESS" | jq -c '.[]' | while read -r agent; do
+            # Remove quotes from the agent string
+            agent=$(echo $agent | tr -d '"')
+            
+            # Split into namespace and agent name
+            NAMESPACE=$(echo $agent | cut -d'/' -f1)
+            AGENT_NAME=$(echo $agent | cut -d'/' -f2)
+            AGENT_PATH="agents/$NAMESPACE"
+            
+            # Convert namespace to uppercase and replace dots/hyphens with underscores for env var name
+            SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
+            
+            # Check if the secret exists
+            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
+              # Get the private key from the dynamic secret name
+              PRIVATE_KEY=$(printenv $SECRET_NAME)
               
-              # Check if any files in this agent directory were modified
-              AGENT_FILES_MODIFIED=false
-              for file in $CHANGED_FILES; do
-                if [[ $file == $AGENT_DIR_RELATIVE/* ]]; then
-                  AGENT_FILES_MODIFIED=true
-                  break
-                fi
-              done
+              echo "Uploading agent: $NAMESPACE/$AGENT_NAME"
+              # Login with the namespace as account ID
+              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
               
-              # Only process agents that have changes
-              if [ "$AGENT_FILES_MODIFIED" = true ] || [[ "$CHANGED_FILES" == *"$METADATA_PATH"* ]]; then
-                # Extract namespace, agent name, and version
-                NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
-                AGENT_NAME=$(jq -r .name "$METADATA_PATH")
-                CURRENT_VERSION=$(jq -r .version "$METADATA_PATH")
-                
-                # Check if the agent is new or modified
-                if git show HEAD^:"$METADATA_PATH" &>/dev/null; then
-                  PREVIOUS_VERSION=$(git show HEAD^:"$METADATA_PATH" | jq -r .version)
-                  if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
-                    echo "Modified agent detected: $NAMESPACE/$AGENT_NAME"
-                    MODIFIED_AGENTS+=("$agent_dir")
-                  fi
-                else
-                  echo "New agent detected: $NAMESPACE/$AGENT_NAME"
-                  NEW_AGENTS+=("$agent_dir")
-                fi
-              else
-                echo "Skipping agent in $agent_dir (no changes detected)"
-              fi
+              # Upload the agent
+              nearai registry upload $AGENT_PATH
+            else
+              echo "Warning: No private key found for $NAMESPACE (looking for secret: $SECRET_NAME)"
+              echo "Skipping upload for this agent"
             fi
           done
-
-            # Combine all agents that need uploading
-            ALL_AGENTS=("${NEW_AGENTS[@]}" "${MODIFIED_AGENTS[@]}")
-            
-            # Upload agents
-            for agent_dir in ${ALL_AGENTS[@]}; do
-            METADATA_PATH="$agent_dir/metadata.json"
-            NAMESPACE=$(jq -r .namespace "$METADATA_PATH")
-            AGENT_NAME=$(jq -r .name "$METADATA_PATH")
-            SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
-
-            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
-              PRIVATE_KEY=$(printenv $SECRET_NAME)
-              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
-              echo "Uploading agent: $NAMESPACE/$AGENT_NAME"
-              nearai registry upload "$agent_dir"
-            else
-              echo "Skipping upload for $NAMESPACE/$AGENT_NAME due to missing private key"
-            fi
-            done
