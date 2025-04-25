@@ -165,19 +165,17 @@ jobs:
             # Split into namespace and agent name
             NAMESPACE=$(echo $agent | cut -d'/' -f1)
             AGENT_NAME=$(echo $agent | cut -d'/' -f2)
-            AGENT_PATH="agents/$NAMESPACE"
+            AGENT_PATH="agents/$AGENT_NAME"
             
             # Convert namespace to uppercase and replace dots/hyphens with underscores for env var name
             SECRET_NAME=$(echo $NAMESPACE | tr '[:lower:]' '[:upper:]' | tr '.-' '_')_PRIVATE_KEY
             
             # Check if the secret exists
-            if [ -n "$(printenv | grep $SECRET_NAME)" ]; then
-              # Get the private key from the dynamic secret name
-              PRIVATE_KEY=$(printenv $SECRET_NAME)
-              
+            if [ -n "${!SECRET_NAME+x}" ]; then
+              # Use the secret directly without storing it in a variable
               echo "Uploading agent: $NAMESPACE/$AGENT_NAME"
-              # Login with the namespace as account ID
-              nearai login --accountId $NAMESPACE --privateKey $PRIVATE_KEY
+              # Login with the namespace as account ID - use secret directly to avoid exposing in logs
+              nearai login --accountId $NAMESPACE --privateKey "${!SECRET_NAME}"
               
               # Upload the agent
               nearai registry upload $AGENT_PATH
