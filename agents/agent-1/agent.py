@@ -2,7 +2,7 @@ from nearai.agents.environment import Environment
 
 def run(env: Environment):
     # Your agent code here
-    # Agent 2
+    # agent 1
     prompt = {"role": "system", "content": "gh-upload-test"}
     result = env.completion([prompt] + env.list_messages())
     env.add_reply(result)
