@@ -114,13 +114,6 @@ jobs:
           echo "has_changes=$HAS_CHANGES" >> $GITHUB_OUTPUT
           echo "Found agents to process: $AGENTS_JSON"
 
-      - name: Check result
-        id: check_result
-        run: |
-          # Just echo the output from the previous step for debugging
-          echo "has_changes=${{ steps.check_agents.outputs.has_changes }}"
-          echo "has_changes=${{ steps.check_agents.outputs.has_changes }}" >> $GITHUB_OUTPUT
-
   upload_agents:
     needs: check_agents
     runs-on: ubuntu-latest
@@ -146,11 +139,6 @@ jobs:
 
       - name: Install jq
         run: sudo apt-get install -y jq
-
-      - name: Debug workflow outputs
-        run: |
-          echo "has_changes: ${{ needs.check_agents.outputs.has_changes }}"
-          echo "agents_to_process: ${{ needs.check_agents.outputs.agents_to_process }}"
 
       - name: Upload agents
         if: needs.check_agents.outputs.agents_to_process != '[]'
